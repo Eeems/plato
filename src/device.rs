@@ -86,27 +86,27 @@ impl Device {
         }
     }
 
-    pub fn create_touchscreen(&self, screen_size: (u32, u32)) -> Receiver<Event> {
+    pub fn create_touchscreen(&self, frame_info: (u32, u32, u32, u32, u32, u32)) -> Receiver<Event> {
         return match self.model {
             Model::Remarkable => {
                 let paths = vec!["/dev/input/event1".to_string(), //this is touchscreen
                                             "/dev/input/event2".to_string()]; //this is buttons
-                let touch_screen = gesture_events(device_events(raw_events(paths), screen_size));
+                let touch_screen = gesture_events(device_events(raw_events(paths), frame_info));
                 touch_screen
             },
             _ => {
                 let paths = vec!["/dev/input/event0".to_string(),
                                             "/dev/input/event1".to_string()];
-                let touch_screen = gesture_events(device_events(raw_events(paths), screen_size));
+                let touch_screen = gesture_events(device_events(raw_events(paths), frame_info));
                 touch_screen
             }
         }
     }
 
-    pub fn parse_device_events(&self, rx: &Receiver<InputEvent>, ty: &Sender<DeviceEvent>, dims: (u32, u32)) {
+    pub fn parse_device_events(&self, rx: &Receiver<InputEvent>, ty: &Sender<DeviceEvent>, frame_info: (u32, u32, u32, u32, u32, u32)) {
         match self.model {
-            Model::Remarkable   => remarkable_parse_device_events(rx, ty, dims),
-            _                   => kobo_parse_device_events(rx, ty, dims),
+            Model::Remarkable   => remarkable_parse_device_events(rx, ty, frame_info),
+            _                   => kobo_parse_device_events(rx, ty, frame_info),
         }
     }
 

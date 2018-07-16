@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::rc::Rc;
+use std::cmp;
 use std::path::PathBuf;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use chrono::Local;
@@ -38,11 +39,15 @@ use gesture::GestureEvent;
 use document::{Document, TocEntry, open, toc_as_html, chapter_at, chapter_relative};
 use document::pdf::PdfOpener;
 use metadata::{Info, FileInfo, ReaderInfo, PageScheme, Margin, CroppingMargins, make_query};
-use geom::{Rectangle, CornerSpec, BorderSpec, Dir, CycleDir, LinearDir, halves};
+use geom::{Rectangle, CornerSpec, BorderSpec, Dir, CycleDir, LinearDir, halves, Point};
 use color::{BLACK, WHITE};
 use app::Context;
 use input::{DeviceEvent, ButtonCode, ButtonStatus};
 
+struct PointFloat {
+    x: f32,
+    y: f32
+}
 
 const HISTORY_SIZE: usize = 32;
 
@@ -59,8 +64,10 @@ pub struct Reader {
     ephemeral: bool,
     refresh_every: Option<u8>,
     search_direction: LinearDir,
+    view_center: PointFloat,
     frame: Rectangle,
     scale: f32,
+    zoom: f32,
     focus: Option<ViewId>,
     search: Option<Search>,
     history: VecDeque<usize>,
@@ -121,18 +128,17 @@ impl Reader {
             }
 
             println!("{}", info.file.path.display());
-
+            let zoom = 1.0;
             let margin = info.reader.as_ref()
                              .and_then(|r| r.cropping_margins.as_ref()
                                             .map(|c| c.margin(current_page)))
                              .cloned().unwrap_or_default();
-            let (pixmap, scale) = build_pixmap(&rect, doc.as_ref(), current_page, &margin);
+            let (pixmap, scale) = build_pixmap(&rect, doc.as_ref(), current_page, &margin, zoom);
             let frame = rect![(margin.left * pixmap.width as f32).ceil() as i32,
                               (margin.top * pixmap.height as f32).ceil() as i32,
                               ((1.0 - margin.right) * pixmap.width as f32).floor() as i32,
                               ((1.0 - margin.bottom) * pixmap.height as f32).floor() as i32];
             let pixmap = Rc::new(pixmap);
-
             hub.send(Event::Render(rect, UpdateMode::Partial)).unwrap();
 
             Reader {
@@ -148,13 +154,32 @@ impl Reader {
                 ephemeral: false,
                 refresh_every: settings.refresh_every,
                 search_direction: LinearDir::Forward,
+                view_center: PointFloat { x: 0.5, y: 0.5 },
                 frame,
                 scale,
+                zoom,
                 focus: None,
                 search: None,
                 history: VecDeque::new(),
             }
         })
+    }
+
+    fn adjust_frame(&self, mut pixmap: Pixmap, margin: Margin) -> (Pixmap, Rectangle) {
+        // this is where we excise the section of page we need
+        // these are constant for a given document
+        let min_x = (margin.left * pixmap.width as f32).ceil() as i32;
+        let min_y = (margin.top / self.zoom * pixmap.height as f32).ceil() as i32;
+        let max_x = ((1.0 - margin.right) * pixmap.width as f32).floor() as i32;
+        let max_y = ((1.0 - margin.bottom) / self.zoom * pixmap.height as f32).floor() as i32;
+        let frame_height = max_y - min_y;
+        // view_center is the normalized coordinate - remember to multiply by the height of the pixmap
+        // also, ensure that the computed min and max lie entirely within the pixmap
+        let shifted_min_y = cmp::max(0, ((self.view_center.y * pixmap.height as f32) - 0.5 * frame_height as f32).ceil() as i32);
+        let shifted_max_y = cmp::min(pixmap.height, ((self.view_center.y * pixmap.height as f32) + 0.5 * frame_height as f32).floor() as i32);
+        let full_frame = rect![min_x,shifted_min_y,max_x,shifted_max_y];
+        println!("{:?}", full_frame);
+        (pixmap, full_frame)
     }
 
     pub fn from_toc(rect: Rectangle, toc: &[TocEntry], mut current_page: usize, hub: &Hub, context: &mut Context) -> Reader {
@@ -181,8 +206,8 @@ impl Reader {
                                              .and_then(|links| links.iter()
                                                                     .find(|link| link.uri == link_uri))
                                              .is_some())}).unwrap_or(0);
-
-        let (pixmap, scale) = build_pixmap(&rect, &doc, current_page, &Margin::default());
+        let zoom = 1.0;
+        let (pixmap, scale) = build_pixmap(&rect, &doc, current_page, &Margin::default(), zoom);
         let pixmap = Rc::new(pixmap);
         let frame = rect![0, 0, pixmap.width, pixmap.height];
 
@@ -202,6 +227,8 @@ impl Reader {
             refresh_every: context.settings.refresh_every,
             search_direction: LinearDir::Forward,
             frame,
+            view_center: PointFloat { x: 0.5, y: 0.5 },
+            zoom,
             scale,
             focus: None,
             search: None,
@@ -365,8 +392,7 @@ impl Reader {
         }
     }
 
-    fn update(&mut self, hub: &Hub) {
-        self.page_turns += 1;
+    fn update_view(&mut self, hub: &Hub) {
         let update_mode = if let Some(n) = self.refresh_every {
             if self.page_turns % (n as usize) == 0 {
                 UpdateMode::Full
@@ -381,15 +407,16 @@ impl Reader {
                                         .map(|c| c.margin(self.current_page)))
                          .cloned().unwrap_or_default();
         let doc = self.doc.lock().unwrap();
-        let (pixmap, scale) = build_pixmap(&self.rect, doc.as_ref(), self.current_page, &margin);
+        let (pixmap, scale) = build_pixmap(&self.rect, doc.as_ref(), self.current_page, &margin, self.zoom);
+        let (pixmap, frame) = self.adjust_frame(pixmap, margin);
         self.pixmap = Rc::new(pixmap);
-        let frame = rect![(margin.left * self.pixmap.width as f32).ceil() as i32,
-                          (margin.top * self.pixmap.height as f32).ceil() as i32,
-                          ((1.0 - margin.right) * self.pixmap.width as f32).floor() as i32,
-                          ((1.0 - margin.bottom) * self.pixmap.height as f32).floor() as i32];
         self.frame = frame;
         self.scale = scale;
         hub.send(Event::Render(self.rect, update_mode)).unwrap();
+    }
+    fn update(&mut self, hub: &Hub) {
+        self.page_turns += 1;
+        self.update_view(hub);
     }
 
     fn search(&mut self, text: &str, query: Regex, hub: &Hub) {
@@ -926,7 +953,7 @@ impl Reader {
             let (pixmap, _) = build_pixmap(&pixmap_rect,
                                            doc.as_ref(),
                                            self.current_page,
-                                           &Margin::default());
+                                           &Margin::default(), self.zoom);
 
             let margin_cropper = MarginCropper::new(self.rect, pixmap, &margin);
             hub.send(Event::Render(*margin_cropper.rect(), UpdateMode::Gui)).unwrap();
@@ -992,6 +1019,15 @@ impl Reader {
         self.update(hub);
     }
 
+    fn pan(&mut self, start: Point, end: Point, hub: &Hub) {
+        let stroke_length = (end.y - start.y) as f32;
+        // natural scroll direction
+        self.view_center.y = self.view_center.y - (stroke_length as f32) / self.pixmap.height as f32;
+        // ensure view_center is entirely within the domain 0,1
+        self.view_center.y = self.view_center.y.min(1.0).max(0.0);
+        self.update_view(hub);
+    }
+
     fn reseed(&mut self, hub: &Hub, context: &mut Context) {
         let (tx, _rx) = mpsc::channel();
         if let Some(index) = locate::<TopBar>(self) {
@@ -1038,13 +1074,26 @@ impl View for Reader {
                 };
                 true
             },
-            Event::Gesture(GestureEvent::Swipe { dir, ref start, .. }) if self.rect.includes(start) => {
+            Event::Gesture(GestureEvent::Swipe { dir, ref start, ref end, .. }) if self.rect.includes(start) => {
                 match dir {
                     Dir::West => self.set_current_page(CycleDir::Next, hub, context),
                     Dir::East => self.set_current_page(CycleDir::Previous, hub, context),
-                    _ => (),
+                    _ => self.pan(*start, *end, hub),
                 };
                 true
+            },
+            Event::Gesture(GestureEvent::Pinch { ref starts, ref ends, ..})  => {
+                println!("In Plato application, need to decide what to do with a pinch");
+                println!("Scale: {}", self.zoom);
+                self.zoom = 0.9 * self.zoom;
+                self.update_view(hub);
+                return true;
+            }
+            Event::Gesture(GestureEvent::Spread { ref starts, ref ends, ..}) => {
+                println!("In Plato application, need to decide what to do with a spread");
+                self.zoom = 1.1 * self.zoom;
+                self.update_view(hub);
+                return true;
             },
             Event::Gesture(GestureEvent::Tap(ref center)) if self.rect.includes(center) => {
                 if self.focus.is_some() {
@@ -1495,12 +1544,12 @@ impl View for Reader {
     }
 }
 
-fn build_pixmap(rect: &Rectangle, doc: &Document, index: usize, margin: &Margin) -> (Pixmap, f32) {
+fn build_pixmap(rect: &Rectangle, doc: &Document, index: usize, margin: &Margin, zoom: f32) -> (Pixmap, f32) {
     let (width, height) = doc.dims(index).unwrap();
     let p_width = (1.0 - (margin.left + margin.right)) * width;
     let p_height = (1.0 - (margin.top + margin.bottom)) * height;
     let w_ratio = rect.width() as f32 / p_width;
     let h_ratio = rect.height() as f32 / p_height;
     let scale = w_ratio.min(h_ratio);
-    (doc.pixmap(index, scale).unwrap(), scale)
+    (doc.pixmap(index, scale * zoom).unwrap(), scale)
 }

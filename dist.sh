@@ -2,11 +2,11 @@
 
 [ -d dist ] && rm -Rf dist
 
-if ! [ -x thirdparty/chrpath/chrpath ] ; then
-	cd thirdparty/chrpath
-	./configure && make
-	cd ../..
-fi
+# if ! [ -x thirdparty/chrpath/chrpath ] ; then
+# 	cd thirdparty/chrpath
+# 	./configure && make
+# 	cd ../..
+# fi
 
 mkdir -p dist/libs
 
@@ -31,6 +31,6 @@ cp -R fonts dist
 cp -R css dist
 cp target/arm-unknown-linux-gnueabihf/release/plato dist/
 
-./thirdparty/chrpath/chrpath -d dist/libs/*
+# ./thirdparty/chrpath/chrpath -d dist/libs/*
 
 arm-linux-gnueabihf-strip dist/plato dist/libs/*

@@ -12,7 +12,8 @@ use self::libremarkable::framebuffer::refresh::PartialRefreshMode;
 
 
 pub struct RemarkableFramebuffer<'a>  {
-	 fb: remarkable_fb::core::Framebuffer<'a>
+	 fb: remarkable_fb::core::Framebuffer<'a>,
+     x_mul: f32, y_mul: f32, offset_x: i32, offset_y: i32
 }
 
 
@@ -103,12 +104,18 @@ impl<'a> Framebuffer for RemarkableFramebuffer<'a> {
     }
 
     fn width(&self) -> u32 {
-        self.fb.var_screen_info.xres
+        (self.fb.var_screen_info.xres as f32 * self.x_mul) as u32
     }
 
     fn height(&self) -> u32 {
-        self.fb.var_screen_info.yres
+        (self.fb.var_screen_info.yres as f32 * self.y_mul) as u32
     }
+
+    fn rect(&self) -> Rectangle {
+        let (width, height) = self.dims();
+        rect![self.offset_x, self.offset_y, width as i32, height as i32]
+    }
+    
 
 }
 
@@ -116,7 +123,22 @@ impl<'a> RemarkableFramebuffer <'a> {
     pub fn new()  -> Result<RemarkableFramebuffer<'static>>  {
         let framebuffer = remarkable_fb::core::Framebuffer::new("/dev/fb0");
         Ok(RemarkableFramebuffer {
-             fb: framebuffer
+             fb: framebuffer,
+             x_mul: 1.0,
+             y_mul: 1.0,
+             offset_x: 0,
+             offset_y: 0
         })
+    }
+
+    pub fn set_frame(&mut self, xmul: f32, ymul: f32, offset_x_percent: f32, offset_y_percent: f32) {
+        self.x_mul = xmul;
+        self.y_mul = ymul;
+        self.offset_x = (offset_x_percent * xmul) as i32;
+        self.offset_y = (offset_y_percent * ymul) as i32;
+    }
+
+    pub fn frame_info(&self) -> (u32, u32, u32, u32, u32, u32) {
+        (self.offset_x as u32, self.offset_y as u32, self.width(), self.height(), self.fb.var_screen_info.xres as u32, self.fb.var_screen_info.yres as u32)
     }
 }

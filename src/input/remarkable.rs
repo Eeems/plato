@@ -27,8 +27,8 @@ impl Default for TouchState {
 }
 
 
-pub fn remarkable_parse_device_events(rx: &Receiver<InputEvent>, ty: &Sender<DeviceEvent>, dims: (u32, u32)) {
-    let (scr_width, scr_height) = dims;
+pub fn remarkable_parse_device_events(rx: &Receiver<InputEvent>, ty: &Sender<DeviceEvent>, frame: (u32, u32, u32, u32, u32, u32)) {
+    let (scr_offset_x, scr_offset_y, virt_width, virt_height, scr_width, scr_height) = frame;
     let mut slot = 0;
     let mut fingers: FnvHashMap<i32, TouchState> = FnvHashMap::default();
 
@@ -54,6 +54,7 @@ pub fn remarkable_parse_device_events(rx: &Receiver<InputEvent>, ty: &Sender<Dev
             } else if evt.code == tc.x {
                 if let Some(ts) = fingers.get_mut(&slot) {
                     let pos = MTWIDTH as i32 - 1 - evt.value;
+                    // set to -1 if outside bounds, otherwise compute the offset
                     ts.position.x = (pos as f32 / MTWIDTH as f32 * scr_width as f32) as i32;
                 }
             } else if evt.code == tc.y {

@@ -30,6 +30,7 @@ use view::notification::Notification;
 use device::CURRENT_DEVICE;
 use font::Fonts;
 use errors::*;
+use std::env;
 
 pub const APP_NAME: &str = "Plato";
 
@@ -65,9 +66,13 @@ impl Context {
     }
 }
 
-pub fn run() -> Result<()> {
+pub fn run<T: Into<Option<f32>>>(w_percent: T, h_percent: T, h_offset: T, v_offset: T) -> Result<()> {
     let path = Path::new(SETTINGS_PATH);
-
+    let concrete_width = w_percent.into().unwrap_or(1.0f32);
+    let concrete_h_offset = h_offset.into().unwrap_or(0.0f32);
+    let concrete_height = h_percent.into().unwrap_or(1.0f32);
+    let concrete_v_offset = v_offset.into().unwrap_or(0.0f32);
+    println!("{},{},{},{}", concrete_height, concrete_width, concrete_h_offset, concrete_v_offset);
     let settings = load_json::<Settings, _>(path);
 
     if let Err(ref e) = settings {
@@ -87,7 +92,9 @@ pub fn run() -> Result<()> {
                              .unwrap_or_default();
 
     let mut fb : RemarkableFramebuffer = RemarkableFramebuffer::new().chain_err(|| "Can't create framebuffer.")?;
-    let touch_screen = CURRENT_DEVICE.create_touchscreen(fb.dims());
+    let (width, height) = fb.dims();
+    fb.set_frame(concrete_width, concrete_height, concrete_h_offset, concrete_v_offset);
+    let touch_screen = CURRENT_DEVICE.create_touchscreen(fb.frame_info());
     let usb_port = usb_events();
 
     let (tx, rx) = mpsc::channel();
@@ -354,6 +361,7 @@ pub fn run() -> Result<()> {
                         break;
                     }
                     _ => {
+                        println!("{:?}", evt);
                         handle_event(view.as_mut(), &evt, &tx, &mut bus, &mut context);
                     },
                 }

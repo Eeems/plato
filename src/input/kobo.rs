@@ -9,7 +9,7 @@ use std::sync::mpsc::{self, Sender, Receiver};
 pub const SLEEP_COVER: u16 = 59;
 
 
-pub fn kobo_parse_device_events(rx: &Receiver<InputEvent>, ty: &Sender<DeviceEvent>, dims: (u32, u32)) {
+pub fn kobo_parse_device_events(rx: &Receiver<InputEvent>, ty: &Sender<DeviceEvent>, frame: (u32, u32, u32, u32, u32, u32)) {
     let mut id = 0;
     let mut position = Point::default();
     let mut pressure = 0;
@@ -34,7 +34,7 @@ pub fn kobo_parse_device_events(rx: &Receiver<InputEvent>, ty: &Sender<DeviceEve
                 }
             } else if evt.code == tc.x {
                 position.x = if CURRENT_DEVICE.mirrored_x {
-                    dims.0 as i32 - 1 - evt.value
+                    frame.2 as i32 - 1 - evt.value
                 } else {
                     evt.value
                 };
