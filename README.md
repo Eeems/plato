@@ -15,6 +15,8 @@ It was tested on the following devices:
 
 ## Supported formats
 
+
+Foobar
 - PDF, ePUB and CBZ via *mupdf*.
 - DJVU via *djvulibre*.
 
